@@ -20,3 +20,5 @@ Plugins/**/*
 dist/**/*.pdb
 .idea/
 *.DotSettings.user
+
+.cursor/
