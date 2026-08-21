@@ -1,0 +1,60 @@
+{
+  "buildFingerprint": "spiritvale-overlay-v1",
+  "behaviours": [
+    {
+      "typeName": "HealthComponent",
+      "rpcs": [
+        { "wireHash": 0, "packetKind": "observersRpc", "methodName": "ApplyDamage_C" },
+        { "wireHash": 1, "packetKind": "observersRpc", "methodName": "Recover_C" },
+        { "wireHash": 2, "packetKind": "observersRpc", "methodName": "Death_C" }
+      ]
+    },
+    {
+      "typeName": "CombatComponent",
+      "rpcs": [
+        { "wireHash": 0, "packetKind": "observersRpc", "methodName": "Attack_C" }
+      ]
+    },
+    {
+      "typeName": "SkillsComponent",
+      "rpcs": [
+        { "wireHash": 0, "packetKind": "observersRpc", "methodName": "SkillBegin_C" },
+        { "wireHash": 1, "packetKind": "observersRpc", "methodName": "SkillComplete_C" },
+        { "wireHash": 2, "packetKind": "observersRpc", "methodName": "SkillInterrupt_C" }
+      ]
+    },
+    {
+      "typeName": "StatusComponent",
+      "rpcs": [
+        { "wireHash": 0, "packetKind": "observersRpc", "methodName": "StatusAdd_C" },
+        { "wireHash": 1, "packetKind": "observersRpc", "methodName": "StatusRemove_C" }
+      ]
+    },
+    {
+      "typeName": "PlayerController",
+      "rpcs": [
+        { "wireHash": 40, "packetKind": "serverRpc", "methodName": "SendPartyInvite" },
+        { "wireHash": 41, "packetKind": "serverRpc", "methodName": "RequestJoinParty" },
+        { "wireHash": 42, "packetKind": "targetRpc", "methodName": "ShowPartyInvite_T" },
+        { "wireHash": 43, "packetKind": "targetRpc", "methodName": "ShowJoinRequest_T" },
+        { "wireHash": 44, "packetKind": "observersRpc", "methodName": "PartyUpdate_C" },
+        { "wireHash": 45, "packetKind": "targetRpc", "methodName": "PartyMemberUpdate_T" },
+        { "wireHash": 50, "packetKind": "observersRpc", "methodName": "MapChange_C" },
+        { "wireHash": 51, "packetKind": "observersRpc", "methodName": "ChannelChange_C" }
+      ]
+    },
+    {
+      "typeName": "PlayerSave",
+      "rpcs": [
+        { "wireHash": 0, "packetKind": "targetRpc", "methodName": "CharacterRecordSync_T" },
+        { "wireHash": 1, "packetKind": "targetRpc", "methodName": "InventorySync_T" }
+      ]
+    },
+    {
+      "typeName": "MonsterController",
+      "rpcs": [
+        { "wireHash": 0, "packetKind": "observersRpc", "methodName": "MonsterSpawn_C" }
+      ]
+    }
+  ]
+}

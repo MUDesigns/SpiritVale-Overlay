@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SpiritVale.Overlay.Api/SpiritVale.Overlay.Api.csproj" />
+    <Project Path="src/SpiritVale.Overlay.Capture/SpiritVale.Overlay.Capture.csproj" />
+    <Project Path="src/SpiritVale.Overlay.Domain/SpiritVale.Overlay.Domain.csproj" />
+    <Project Path="src/SpiritVale.Overlay.Host/SpiritVale.Overlay.Host.csproj" />
+    <Project Path="src/SpiritVale.Overlay.SamplePlugin/SpiritVale.Overlay.SamplePlugin.csproj" />
+  </Folder>
+</Solution>
