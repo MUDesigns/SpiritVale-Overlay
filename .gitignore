@@ -8,5 +8,8 @@ obj/
 *.exe
 Plugins/**/*
 !Plugins/.gitkeep
+!Plugins/SpiritVale.Overlay.SamplePlugin/
+!Plugins/SpiritVale.Overlay.SamplePlugin/**
+!Plugins/SpiritVale.Overlay.SamplePlugin/*.dll
 .idea/
 *.DotSettings.user
