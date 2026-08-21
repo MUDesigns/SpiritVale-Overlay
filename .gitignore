@@ -10,6 +10,6 @@ Plugins/**/*
 !Plugins/.gitkeep
 !Plugins/SpiritVale.Overlay.SamplePlugin/
 !Plugins/SpiritVale.Overlay.SamplePlugin/**
-!.gitignore
+!Plugins/SpiritVale.Overlay.SamplePlugin/*.dll
 .idea/
 *.DotSettings.user
