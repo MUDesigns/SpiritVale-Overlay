@@ -32,15 +32,22 @@
     </Content>
   </ItemGroup>
 
-  <Target Name="PublishSamplePlugin" AfterTargets="Build">
+  <Target Name="PublishSamplePlugin" AfterTargets="Build;Publish">
     <PropertyGroup>
+      <_SamplePluginDll>$(MSBuildThisFileDirectory)..\SpiritVale.Overlay.SamplePlugin\bin\$(Configuration)\net8.0\SpiritVale.Overlay.SamplePlugin.dll</_SamplePluginDll>
       <_PluginOut>$(OutputPath)Plugins\SpiritVale.Overlay.SamplePlugin</_PluginOut>
+      <_PublishPluginOut Condition="'$(PublishDir)' != ''">$(PublishDir)Plugins\SpiritVale.Overlay.SamplePlugin</_PublishPluginOut>
     </PropertyGroup>
-    <MakeDir Directories="$(_PluginOut)" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\SpiritVale.Overlay.SamplePlugin\bin\$(Configuration)\net8.0\SpiritVale.Overlay.SamplePlugin.dll"
+    <MakeDir Directories="$(_PluginOut)" Condition="Exists('$(_SamplePluginDll)')" />
+    <Copy SourceFiles="$(_SamplePluginDll)"
           DestinationFolder="$(_PluginOut)"
           SkipUnchangedFiles="true"
-          Condition="Exists('$(MSBuildThisFileDirectory)..\SpiritVale.Overlay.SamplePlugin\bin\$(Configuration)\net8.0\SpiritVale.Overlay.SamplePlugin.dll')" />
+          Condition="Exists('$(_SamplePluginDll)')" />
+    <MakeDir Directories="$(_PublishPluginOut)" Condition="'$(PublishDir)' != '' And Exists('$(_SamplePluginDll)')" />
+    <Copy SourceFiles="$(_SamplePluginDll)"
+          DestinationFolder="$(_PublishPluginOut)"
+          SkipUnchangedFiles="true"
+          Condition="'$(PublishDir)' != '' And Exists('$(_SamplePluginDll)')" />
   </Target>
 
 </Project>

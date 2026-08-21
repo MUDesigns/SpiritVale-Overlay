@@ -7,16 +7,31 @@ This is a **separate process**. It does not inject into the game, does not use B
 ## Requirements
 
 - Windows 10/11
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) (prebuilt) or [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (from source)
 - [Npcap](https://npcap.com/#download) with **WinPcap API-compatible mode** enabled
 - SpiritVale running (`SpiritVale.exe`) for live data
 
-## Build & run
+## Prebuilt plugin manager
+
+A Release `win-x64` publish of the overlay host (plugin manager) ships in [`dist/win-x64`](dist/win-x64), including the sample DPS plugin under `Plugins\`.
+
+```powershell
+cd dist\win-x64
+.\SpiritVale.Overlay.Host.exe
+```
+
+## Build & run from source
 
 ```powershell
 cd X:\projects\SpiritVale-Overlay
 dotnet build SpiritVale.Overlay.slnx -c Release
 dotnet run --project src\SpiritVale.Overlay.Host\SpiritVale.Overlay.Host.csproj -c Release
+```
+
+To refresh the committed publish output:
+
+```powershell
+dotnet publish src\SpiritVale.Overlay.Host\SpiritVale.Overlay.Host.csproj -c Release -r win-x64 --self-contained false -o dist\win-x64
 ```
 
 ### Hotkeys
