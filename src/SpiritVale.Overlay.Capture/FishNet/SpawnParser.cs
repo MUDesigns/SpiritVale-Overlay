@@ -101,6 +101,14 @@ internal static class SpawnParser
                     if (!IsPlausibleBoundary(buffer, candidateOffset)) continue;
 
                     var bindings = BindBehaviourTypes(registrations, map);
+                    if (prefabId is int pid)
+                    {
+                        foreach (var extra in PrefabLayouts.Bind(collectionId, pid, objectRef.Value))
+                        {
+                            if (!bindings.Exists(b => b.Key == extra.Key))
+                                bindings.Add(extra);
+                        }
+                    }
 
                     // Rebuild registrations with bound types.
                     var typed = new List<(int, RpcLinkRegistration)>(registrations.Count);

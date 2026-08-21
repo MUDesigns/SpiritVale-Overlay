@@ -17,6 +17,12 @@ public static class PayloadHeuristics
                 if (DamageCodec.TryDecode(payload, out var dmg))
                     DamageCodec.WriteToFields(packet, dmg);
                 break;
+            case "CastBegin_C":
+            case "AutoCast_C":
+            case "ReduceCooldown_T":
+            case "ToggleBegin_C":
+                SkillStateCodec.WriteToFields(packet);
+                break;
             case "Recover_C":
                 try
                 {
@@ -39,23 +45,55 @@ public static class PayloadHeuristics
                     if (identity.Value.Uid is not null)
                         packet.Fields["uid"] = identity.Value.Uid;
                 }
+                var meta = CharacterMetaCodec.TryDecode(payload);
+                if (meta is not null)
+                {
+                    if (!packet.Fields.ContainsKey("displayName"))
+                        packet.Fields["displayName"] = meta.Value.DisplayName;
+                    if (meta.Value.Uid is not null && !packet.Fields.ContainsKey("uid"))
+                        packet.Fields["uid"] = meta.Value.Uid;
+                    if (meta.Value.Level is int lv)
+                        packet.Fields["level"] = lv;
+                    if (meta.Value.JobLevel is int job)
+                        packet.Fields["jobLevel"] = job;
+                    if (meta.Value.ClassName is not null)
+                        packet.Fields["className"] = meta.Value.ClassName;
+                    if (meta.Value.ArchetypeId is int arch)
+                        packet.Fields["archetype"] = arch;
+                }
                 break;
             }
+            case "ApplyEffectDisplays_O":
+            case "ApplyEffect_T":
+            case "RemoveEffect_T":
+            case "ApplySkillDisplay_O":
+            case "RemoveSkillDisplay_O":
+            case "CancelEffect_S":
+                StatusDisplayCodec.WriteToFields(packet);
+                break;
         }
 
         if (packet.PacketName == FishNetPacketNames.SyncType
             || packet.SyncPayload is not null)
         {
-            var sync = packet.SyncPayload ?? payload;
-            var identity = ActorIdentityCodec.TryDecodeVisualData(sync);
-            if (identity is not null)
+            VitalsSyncCodec.WriteToFields(packet);
+            if (packet.NetworkBehaviourType is "HealthComponent" or "SkillsComponent")
             {
-                packet.Fields["displayName"] = identity.Value.DisplayName;
-                packet.SyncName = "VisualData";
-                packet.SyncIndex ??= 5;
-                packet.NetworkBehaviourType ??= "PlayerController";
-                if (identity.Value.Archetype is int arch)
-                    packet.Fields["archetype"] = arch;
+                // Don't try VisualData on vitals sync.
+            }
+            else
+            {
+                var sync = packet.SyncPayload ?? payload;
+                var identity = ActorIdentityCodec.TryDecodeVisualData(sync);
+                if (identity is not null)
+                {
+                    packet.Fields["displayName"] = identity.Value.DisplayName;
+                    packet.SyncName = "VisualData";
+                    packet.SyncIndex ??= 5;
+                    packet.NetworkBehaviourType ??= "PlayerController";
+                    if (identity.Value.Archetype is int arch)
+                        packet.Fields["archetype"] = arch;
+                }
             }
         }
 

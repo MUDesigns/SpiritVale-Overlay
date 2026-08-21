@@ -24,11 +24,17 @@
   <ItemGroup>
     <Content Include="Assets\shop-icon.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <TargetPath>Assets\shop-icon.png</TargetPath>
     </Content>
     <Content Include="Assets\shop-icon.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <TargetPath>Assets\shop-icon.ico</TargetPath>
+    </Content>
+    <Content Include="Assets\Sprites\**\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
 

@@ -64,9 +64,9 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
 
         var settings = PluginRegistryStore.Load();
         _preferredDevice = settings.PreferredCaptureDevice;
-        _spriteDumpPath = settings.SpriteDumpPath
-            ?? @"X:\projects\SpiritVale Development - Il2CPP dump\development\sprite dump";
-        _api.ConfigureSpriteDump(_spriteDumpPath);
+        // Bundled Assets/Sprites are always loaded; dump path is an optional overlay.
+        _spriteDumpPath = settings.SpriteDumpPath ?? "";
+        _api.ConfigureSpriteDump(string.IsNullOrWhiteSpace(_spriteDumpPath) ? null : _spriteDumpPath);
         if (!string.IsNullOrWhiteSpace(settings.LocalCharacterName))
             _api.SeedLocalPlayerName(settings.LocalCharacterName);
 
@@ -106,13 +106,16 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
         var io = ImGui.GetIO();
         io.ConfigFlags &= ~ImGuiConfigFlags.NavEnableKeyboard;
 
+        var pluginWantsMouse = _ui.WantsMouse;
+        _ui.BeginFrame();
+
         var radialOpen = _radial.UpdateAndDraw(_plugins, tabHeld);
 
-        // Radial needs mouse hits without activating/focus-stealing the overlay
+        // Radial / plugin config need mouse hits without activating/focus-stealing the overlay
         // (focus steal causes SpiritVale to miss Tab key-up and "lock" input).
         if (window is not null)
         {
-            if (radialOpen)
+            if (radialOpen || pluginWantsMouse)
             {
                 if (!_radialClickThroughOverride)
                 {
@@ -300,16 +303,22 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
 
         HudTheme.SectionLabel("Sprites");
         HudTheme.BeginCard();
-        ImGui.InputText("Sprite dump folder", ref _spriteDumpPath, 512);
-        ImGui.TextColored(HudTheme.TextMuted, "Class / skill icons from the Il2CPP sprite dump.");
+        ImGui.TextColored(HudTheme.TextMuted,
+            "Class / skill icons ship with the overlay (Assets/Sprites).");
+        ImGui.InputText("Optional dump overlay", ref _spriteDumpPath, 512);
+        ImGui.TextColored(HudTheme.TextMuted,
+            "Leave empty for bundled icons. A dump folder overlays extras for local/dev.");
         if (ImGui.Button("APPLY SPRITES"))
         {
-            _api.ConfigureSpriteDump(_spriteDumpPath);
+            var path = string.IsNullOrWhiteSpace(_spriteDumpPath) ? null : _spriteDumpPath.Trim();
+            _api.ConfigureSpriteDump(path);
             _spriteTextures.Clear();
             SaveCaptureSettings();
-            _managerMessage = Directory.Exists(_spriteDumpPath)
-                ? "Sprite dump applied."
-                : "Sprite dump path not found.";
+            _managerMessage = path is null
+                ? "Using bundled sprites only."
+                : Directory.Exists(path)
+                    ? "Sprite dump overlay applied."
+                    : "Dump path not found — bundled sprites still active.";
         }
         HudTheme.EndCard();
 

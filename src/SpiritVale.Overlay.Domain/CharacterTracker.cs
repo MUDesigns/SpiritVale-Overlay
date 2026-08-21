@@ -18,11 +18,13 @@ public sealed class CharacterTracker : ICharacterApi
         if (packet.RpcName is "LoadCharacter_T" or "CharacterCallback_T" or "CharacterRecordSync_T" or "InventorySync_T")
         {
             var meta = CharacterMetaCodec.TryDecode(packet.Payload);
+            var identity = ActorIdentityCodec.TryDecodeCharacterData(packet.Payload);
             var name = packet.Fields.TryGetValue("displayName", out var n) ? n?.ToString() : null;
             name ??= meta?.DisplayName;
-            if (string.IsNullOrWhiteSpace(name))
-                name = ActorIdentityCodec.TryDecodeCharacterData(packet.Payload)?.DisplayName;
+            name ??= identity?.DisplayName;
             name ??= Local?.DisplayName ?? _names.LocalDisplayName;
+            var uid = packet.Fields.TryGetValue("uid", out var uidObj) ? uidObj?.ToString() : null;
+            uid ??= identity?.Uid ?? Local?.CharacterId;
 
             if (packet.ObjectId is int actorId)
             {
@@ -37,13 +39,24 @@ public sealed class CharacterTracker : ICharacterApi
                     _names.SetMeta(_names.LocalActorId ?? 0, meta.Value.ArchetypeId, meta.Value.Level, isLocal: true);
             }
 
+            var stats = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            if (Local?.Stats is { Count: > 0 } existing)
+            {
+                foreach (var kv in existing)
+                    stats[kv.Key] = kv.Value;
+            }
+            if (meta?.Level is int metaLevel && metaLevel > 0)
+                stats["level"] = metaLevel;
+            if (meta?.JobLevel is int metaJob && metaJob > 0)
+                stats["jobLevel"] = metaJob;
+
             Local = new CharacterSnapshot(
                 name ?? "You",
-                Local?.CharacterId,
+                uid,
                 packet.ObjectId ?? Local?.ActorId ?? _names.LocalActorId,
                 meta?.Level ?? _names.LocalLevel ?? Local?.Level,
                 meta?.ClassName ?? _names.LocalClassName ?? Local?.ClassName,
-                Local?.Stats ?? new Dictionary<string, double>(),
+                stats.Count > 0 ? stats : Local?.Stats ?? new Dictionary<string, double>(),
                 Local?.Equipped ?? Array.Empty<InventoryItem>(),
                 Local?.Bag ?? Array.Empty<InventoryItem>());
             CharacterChanged?.Invoke();

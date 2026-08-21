@@ -96,9 +96,9 @@ public static class CharacterMetaCodec
             try
             {
                 var r = new CharacterReader(payload);
+                // CharacterCallback_T prefixes an update-type packed int; LoadCharacter_T does not.
                 if (skipEnum) r.Packed();
                 r.ObjectPresent();
-                r.String(80); // uid lead sometimes empty
                 var uid = r.String(80);
                 r.String(80);
                 r.Packed();

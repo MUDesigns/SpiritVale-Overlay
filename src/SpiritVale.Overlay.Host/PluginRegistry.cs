@@ -28,7 +28,7 @@ internal sealed class PluginRegistryFile
     public string? PreferredCaptureDevice { get; set; }
     public bool AutoStartCapture { get; set; } = true;
     public string? LocalCharacterName { get; set; }
-    /// <summary>Folder of dumped PNGs ({spriteId}-sharedassets…).</summary>
+    /// <summary>Optional Il2CPP dump overlay on top of bundled Assets/Sprites.</summary>
     public string? SpriteDumpPath { get; set; }
     public List<PluginRecord> Plugins { get; set; } = new();
 }

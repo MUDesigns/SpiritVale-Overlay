@@ -64,6 +64,16 @@ internal static class MessageParser
                     packet.ObjectId = header.ObjectId;
                     packet.NetworkBehaviourIndex = header.ComponentIndex;
                     packet.NetworkBehaviourType = state.Components.GetValueOrDefault($"{header.ObjectId}:{header.ComponentIndex}");
+                    if (packet.NetworkBehaviourType is null)
+                    {
+                        var recovered = PrefabLayouts.RecoverType(state.Components, header.ObjectId, header.ComponentIndex);
+                        if (recovered is not null)
+                        {
+                            packet.NetworkBehaviourType = recovered;
+                            state.Components[$"{header.ObjectId}:{header.ComponentIndex}"] = recovered;
+                            PrefabLayouts.FillSiblings(state.Components, header.ObjectId);
+                        }
+                    }
                     packet.SyncPayload = syncPayload;
                     packet.Payload = syncPayload;
                     if (syncPayload.Length > 0)
@@ -268,10 +278,16 @@ internal static class MessageParser
                 {
                     packet.NetworkBehaviourType = inferred;
                     state.Components[key] = inferred;
+                    PrefabLayouts.FillSiblings(state.Components, header.ObjectId);
                 }
             }
 
             ApplyRpcLookup(packet, options.RpcMap, packetName, hash8, hash16);
+            if (packet.NetworkBehaviourType is not null)
+            {
+                state.Components.TryAdd(key, packet.NetworkBehaviourType);
+                PrefabLayouts.FillSiblings(state.Components, header.ObjectId);
+            }
             var hashWidth = packet.RpcHash is int wh && wh > 0xff ? 2 : 1;
             if (hashWidth != hashWidthGuess)
                 packet.Payload = buffer.Slice(rpcStart + hashWidth, end - (rpcStart + hashWidth)).ToArray();
@@ -331,6 +347,11 @@ internal static class MessageParser
         if (chosen.MethodName is "ApplyDamage_C" or "Death_C"
             && DamageCodec.TryDecode(packet.Payload, out var dmg))
             DamageCodec.WriteToFields(packet, dmg);
+        else if (chosen.MethodName is "CastBegin_C" or "AutoCast_C" or "ReduceCooldown_T" or "ToggleBegin_C")
+            SkillStateCodec.WriteToFields(packet);
+        else if (chosen.MethodName is "ApplyEffectDisplays_O" or "ApplyEffect_T" or "RemoveEffect_T"
+                 or "ApplySkillDisplay_O" or "RemoveSkillDisplay_O" or "CancelEffect_S")
+            StatusDisplayCodec.WriteToFields(packet);
     }
 
     private static DecodedFishNetPacket BasePacket(

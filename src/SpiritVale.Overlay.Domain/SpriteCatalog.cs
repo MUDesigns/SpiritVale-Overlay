@@ -8,32 +8,37 @@ public sealed class SpriteCatalog : ISpriteCatalog
 {
     private readonly Dictionary<string, string> _stemToPath = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, SkillInfo> _skills = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<SkillCatalogEntry> _skillList = new();
+    private string? _shippedPath;
     private string? _dumpPath;
 
     private readonly record struct SkillInfo(string DisplayName, string? SpriteId, int? ArchetypeId, string? ClassName);
 
     public string? SpriteDumpPath => _dumpPath;
+    public string? ShippedSpritesPath => _shippedPath;
 
-    public SpriteCatalog(string? dumpPath = null, string? skillCatalogJsonPath = null)
+    public SpriteCatalog(string? dumpPath = null, string? skillCatalogJsonPath = null, string? shippedSpritesPath = null)
     {
+        SetShippedSpritesPath(shippedSpritesPath ?? DefaultShippedSpritesPath());
         SetDumpPath(dumpPath);
         LoadSkillCatalog(skillCatalogJsonPath);
     }
 
+    public static string DefaultShippedSpritesPath()
+        => Path.Combine(AppContext.BaseDirectory, "Assets", "Sprites");
+
+    /// <summary>Bundled PNGs shipped next to the host (Assets/Sprites/{stem}.png).</summary>
+    public void SetShippedSpritesPath(string? path)
+    {
+        _shippedPath = string.IsNullOrWhiteSpace(path) ? null : path.Trim();
+        RebuildIndex();
+    }
+
+    /// <summary>Optional Il2CPP dump overlay — merges on top of shipped sprites for local/dev use.</summary>
     public void SetDumpPath(string? dumpPath)
     {
         _dumpPath = string.IsNullOrWhiteSpace(dumpPath) ? null : dumpPath.Trim();
-        _stemToPath.Clear();
-        if (_dumpPath is null || !Directory.Exists(_dumpPath)) return;
-
-        foreach (var file in Directory.EnumerateFiles(_dumpPath, "*.png", SearchOption.TopDirectoryOnly))
-        {
-            var stem = Path.GetFileNameWithoutExtension(file);
-            var cut = stem.IndexOf("-sharedassets", StringComparison.OrdinalIgnoreCase);
-            if (cut > 0) stem = stem[..cut];
-            if (!_stemToPath.ContainsKey(stem))
-                _stemToPath[stem] = file;
-        }
+        RebuildIndex();
     }
 
     public string? ResolveSpritePath(string? spriteId)
@@ -63,6 +68,8 @@ public sealed class SpriteCatalog : ISpriteCatalog
         return (skillId, null);
     }
 
+    public IReadOnlyList<SkillCatalogEntry> ListSkills() => _skillList;
+
     /// <summary>
     /// Infer archetype from damage-weighted skills. Prefers known VisualData class when provided.
     /// </summary>
@@ -90,6 +97,32 @@ public sealed class SpriteCatalog : ISpriteCatalog
         return votes.OrderByDescending(kv => kv.Value)
             .ThenByDescending(kv => kv.Key) // advanced jobs tend to be higher ids
             .First().Key;
+    }
+
+    private void RebuildIndex()
+    {
+        _stemToPath.Clear();
+        IndexDirectory(_shippedPath, stripSharedAssetsSuffix: false);
+        // Dump files use {stem}-sharedassets….png; shipped pack uses {stem}.png.
+        IndexDirectory(_dumpPath, stripSharedAssetsSuffix: true);
+    }
+
+    private void IndexDirectory(string? directory, bool stripSharedAssetsSuffix)
+    {
+        if (directory is null || !Directory.Exists(directory)) return;
+
+        foreach (var file in Directory.EnumerateFiles(directory, "*.png", SearchOption.TopDirectoryOnly))
+        {
+            var stem = Path.GetFileNameWithoutExtension(file);
+            if (stripSharedAssetsSuffix)
+            {
+                var cut = stem.IndexOf("-sharedassets", StringComparison.OrdinalIgnoreCase);
+                if (cut > 0) stem = stem[..cut];
+            }
+
+            // Later sources (dump) override earlier (shipped).
+            _stemToPath[stem] = file;
+        }
     }
 
     private void LoadSkillCatalog(string? path)
@@ -122,7 +155,9 @@ public sealed class SpriteCatalog : ISpriteCatalog
                     string? className = skill.TryGetProperty("className", out var cn) && cn.ValueKind == JsonValueKind.String
                         ? cn.GetString()
                         : ArchetypeNames.GetName(arch);
-                    _skills[id] = new SkillInfo(name, sprite, arch, className);
+                    var info = new SkillInfo(name, sprite, arch, className);
+                    _skills[id] = info;
+                    _skillList.Add(new SkillCatalogEntry(id, name, sprite, className, arch));
                 }
             }
         }
