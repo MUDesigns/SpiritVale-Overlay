@@ -23,8 +23,9 @@ dotnet run --project src\SpiritVale.Overlay.Host\SpiritVale.Overlay.Host.csproj 
 
 | Key | Action |
 |-----|--------|
-| Insert | Toggle manager window |
-| Home | Force click-through |
+| F2 | Toggle manager window |
+| F3 | Force click-through |
+| F4 | Toggle follow SpiritVale window |
 
 ## Plugin manager
 

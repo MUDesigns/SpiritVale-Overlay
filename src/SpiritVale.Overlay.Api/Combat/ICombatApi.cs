@@ -9,6 +9,15 @@ public interface ICombatApi
 
     CombatEncounterSnapshot? CurrentEncounter { get; }
     IReadOnlyList<DpsRow> DpsRows { get; }
+
+    /// <summary>Local player + named combatants with current-encounter DPS (0 when idle).</summary>
+    IReadOnlyList<DpsRow> Leaderboard { get; }
+
+    /// <summary>Per-skill breakdown for one actor in the current encounter.</summary>
+    IReadOnlyList<SkillDpsRow> GetSkillBreakdown(int actorId, string? displayName = null);
+
+    /// <summary>Clears the current encounter totals (hotkey / UI reset).</summary>
+    void ResetEncounter();
 }
 
 public sealed record CombatDamageEvent(
@@ -42,7 +51,25 @@ public sealed record DpsRow(
     string DisplayName,
     long TotalDamage,
     double Dps,
-    double Share);
+    double Share,
+    int? ArchetypeId = null,
+    string? ClassName = null,
+    int? Level = null,
+    int Hits = 0,
+    int Crits = 0,
+    int Deaths = 0,
+    double CritRate = 0);
+
+public sealed record SkillDpsRow(
+    string SkillId,
+    string DisplayName,
+    string? SpriteId,
+    long TotalDamage,
+    double Dps,
+    double Share,
+    int Hits,
+    int Crits,
+    double CritRate);
 
 public sealed record CombatEncounterSnapshot(
     DateTimeOffset StartedAt,

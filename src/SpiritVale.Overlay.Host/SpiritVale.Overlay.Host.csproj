@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\shop-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +19,17 @@
 
   <ItemGroup>
     <PackageReference Include="ClickableTransparentOverlay" Version="11.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\shop-icon.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>Assets\shop-icon.png</TargetPath>
+    </Content>
+    <Content Include="Assets\shop-icon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>Assets\shop-icon.ico</TargetPath>
+    </Content>
   </ItemGroup>
 
   <Target Name="PublishSamplePlugin" AfterTargets="Build">

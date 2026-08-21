@@ -24,6 +24,7 @@ public static class BuiltinRpcMap
                     PacketKind = rpc.GetProperty("packetKind").GetString()!,
                     MethodName = rpc.GetProperty("methodName").GetString()!,
                     BehaviourType = typeName,
+                    Parameters = ParseParameters(rpc),
                 });
             }
             behaviours.Add(new FishNetBehaviourDefinition { TypeName = typeName, Rpcs = rpcs });
@@ -33,6 +34,36 @@ public static class BuiltinRpcMap
         {
             BuildFingerprint = root.TryGetProperty("buildFingerprint", out var fp) ? fp.GetString() ?? "unknown" : "unknown",
             Behaviours = behaviours,
+        };
+    }
+
+    private static IReadOnlyList<FishNetRpcParameter>? ParseParameters(JsonElement rpc)
+    {
+        if (!rpc.TryGetProperty("parameters", out var parameters) || parameters.ValueKind != JsonValueKind.Array)
+            return null;
+        var list = new List<FishNetRpcParameter>();
+        foreach (var p in parameters.EnumerateArray())
+            list.Add(ParseParameter(p));
+        return list;
+    }
+
+    private static FishNetRpcParameter ParseParameter(JsonElement p)
+    {
+        IReadOnlyList<FishNetRpcParameter>? fields = null;
+        if (p.TryGetProperty("fields", out var fieldsEl) && fieldsEl.ValueKind == JsonValueKind.Array)
+        {
+            var nested = new List<FishNetRpcParameter>();
+            foreach (var f in fieldsEl.EnumerateArray())
+                nested.Add(ParseParameter(f));
+            fields = nested;
+        }
+
+        return new FishNetRpcParameter
+        {
+            Name = p.TryGetProperty("name", out var n) ? n.GetString() : null,
+            TypeName = p.TryGetProperty("typeName", out var t) ? t.GetString() : null,
+            Codec = p.TryGetProperty("codec", out var c) ? c.GetString() : null,
+            Fields = fields,
         };
     }
 }

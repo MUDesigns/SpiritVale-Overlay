@@ -110,12 +110,21 @@ public sealed class RpcLinkRegistration
     public string? NetworkBehaviourType { get; init; }
 }
 
+public sealed record FishNetRpcParameter
+{
+    public string? Name { get; init; }
+    public string? TypeName { get; init; }
+    public string? Codec { get; init; }
+    public IReadOnlyList<FishNetRpcParameter>? Fields { get; init; }
+}
+
 public sealed record FishNetRpcDefinition
 {
     public required int WireHash { get; init; }
     public required string PacketKind { get; init; }
     public required string MethodName { get; init; }
     public string? BehaviourType { get; init; }
+    public IReadOnlyList<FishNetRpcParameter>? Parameters { get; init; }
 }
 
 public sealed class FishNetBehaviourDefinition
@@ -129,31 +138,29 @@ public sealed class FishNetRpcMap
     public string BuildFingerprint { get; init; } = "unknown";
     public IReadOnlyList<FishNetBehaviourDefinition> Behaviours { get; init; } = Array.Empty<FishNetBehaviourDefinition>();
 
-    private Dictionary<(string Behaviour, string Kind, int Hash), FishNetRpcDefinition>? _index;
-
     public FishNetRpcDefinition? Lookup(string? behaviourType, string packetKind, int hash8, int? hash16 = null)
     {
-        EnsureIndex();
-        if (behaviourType is not null)
-        {
-            if (_index!.TryGetValue((behaviourType, packetKind, hash8), out var by8))
-                return by8;
-            if (hash16 is int h16 && _index.TryGetValue((behaviourType, packetKind, h16), out var by16))
-                return by16;
-        }
+        var all = FindAll(behaviourType, packetKind, hash8, hash16);
+        return all.Count > 0 ? all[0] : null;
+    }
 
-        // Ambiguous global lookup by hash alone (first match).
+    public IReadOnlyList<FishNetRpcDefinition> FindAll(string? behaviourType, string packetKind, int hash8, int? hash16 = null)
+    {
+        var matches = new List<FishNetRpcDefinition>();
         foreach (var behaviour in Behaviours)
         {
+            if (behaviourType is not null
+                && !string.Equals(behaviour.TypeName, behaviourType, StringComparison.Ordinal))
+                continue;
             foreach (var rpc in behaviour.Rpcs)
             {
                 if (!string.Equals(rpc.PacketKind, packetKind, StringComparison.Ordinal))
                     continue;
                 if (rpc.WireHash == hash8 || (hash16 is int h && rpc.WireHash == h))
-                    return rpc with { BehaviourType = behaviour.TypeName };
+                    matches.Add(rpc with { BehaviourType = behaviour.TypeName });
             }
         }
-        return null;
+        return matches;
     }
 
     public string? InferBehaviourType(string packetKind, int hash8, int? hash16)
@@ -173,16 +180,5 @@ public sealed class FishNetRpcMap
             }
         }
         return found;
-    }
-
-    private void EnsureIndex()
-    {
-        if (_index is not null) return;
-        _index = new Dictionary<(string, string, int), FishNetRpcDefinition>();
-        foreach (var behaviour in Behaviours)
-        {
-            foreach (var rpc in behaviour.Rpcs)
-                _index[(behaviour.TypeName, rpc.PacketKind, rpc.WireHash)] = rpc with { BehaviourType = behaviour.TypeName };
-        }
     }
 }

@@ -7,6 +7,9 @@ public sealed class PartyTracker : IPartyApi
 {
     private readonly object _gate = new();
     private readonly List<PartyMember> _members = new();
+    private readonly ActorDirectory _names;
+
+    public PartyTracker(ActorDirectory names) => _names = names;
 
     public event Action? PartyChanged;
     public event Action<PartyInviteEvent>? InviteReceived;
@@ -25,25 +28,43 @@ public sealed class PartyTracker : IPartyApi
         {
             case "ShowPartyInvite_T":
                 InviteReceived?.Invoke(new PartyInviteEvent(
-                    ReadString(packet, "inviterName") ?? "Unknown",
+                    ReadString(packet, "inviterName")
+                    ?? ReadDisplayName(packet)
+                    ?? "Unknown",
                     ReadString(packet, "inviterId") ?? "",
                     ReadInt(packet, "partyId")));
                 break;
             case "PartyUpdate_C":
             case "PartyMemberUpdate_T":
-                // Without full payload codecs, keep a placeholder self member when party RPCs appear.
+            {
+                var name = ReadDisplayName(packet) ?? "You";
+                var actorId = packet.ObjectId;
+                if (actorId is int id)
+                    _names.SetName(id, name);
+
                 lock (_gate)
                 {
                     if (_members.Count == 0)
                     {
                         _members.Add(new PartyMember(
-                            "local", "You", packet.ObjectId, 1, 1, 1, 1,
+                            "local", name, actorId, 1, 1, 1, 1,
                             Array.Empty<string>(), true, true));
                         PartyId ??= 1;
                         PartyChanged?.Invoke();
                     }
+                    else if (actorId is int aid)
+                    {
+                        for (var i = 0; i < _members.Count; i++)
+                        {
+                            if (_members[i].ActorId != aid) continue;
+                            _members[i] = _members[i] with { DisplayName = name };
+                            PartyChanged?.Invoke();
+                            break;
+                        }
+                    }
                 }
                 break;
+            }
         }
     }
 
@@ -76,6 +97,15 @@ public sealed class PartyTracker : IPartyApi
             PartyId = null;
         }
         PartyChanged?.Invoke();
+    }
+
+    private static string? ReadDisplayName(DecodedFishNetPacket packet)
+    {
+        if (packet.Fields.TryGetValue("displayName", out var n) && n is string s && s.Length >= 2)
+            return s;
+        if (packet.Fields.TryGetValue("nameCandidates", out var c) && c is IReadOnlyList<string> list)
+            return list.FirstOrDefault();
+        return ReadString(packet, "inviterName");
     }
 
     private static string? ReadString(DecodedFishNetPacket packet, string name)

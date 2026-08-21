@@ -89,10 +89,52 @@ internal sealed class PluginManager : IDisposable
     public bool IsBusy { get; private set; }
     public CatalogFile? LastCatalog => _catalog.Cached;
 
+    /// <summary>
+    /// Copy newer build-output plugins into AppData <b>before</b> any DLL is loaded.
+    /// ImportDevPluginsFrom alone often fails because ALC unload does not release file locks promptly.
+    /// </summary>
+    public static void SyncDevBuildPlugins(string buildPluginsDirectory)
+    {
+        if (!Directory.Exists(buildPluginsDirectory)) return;
+        OverlayPaths.Ensure();
+        foreach (var dir in Directory.GetDirectories(buildPluginsDirectory))
+        {
+            var id = Path.GetFileName(dir);
+            var srcDll = FindPluginDll(dir, id);
+            if (srcDll is null) continue;
+            var destDir = Path.Combine(OverlayPaths.PluginsDir, id);
+            var destDll = Path.Combine(destDir, Path.GetFileName(srcDll));
+            Directory.CreateDirectory(destDir);
+            if (File.Exists(destDll)
+                && File.GetLastWriteTimeUtc(srcDll) <= File.GetLastWriteTimeUtc(destDll))
+                continue;
+            try
+            {
+                foreach (var file in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+                {
+                    var rel = Path.GetRelativePath(dir, file);
+                    var target = Path.Combine(destDir, rel);
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    File.Copy(file, target, overwrite: true);
+                }
+            }
+            catch
+            {
+                // Locked / in use — user still has the previous copy.
+            }
+        }
+    }
+
+
     public void DrawEnabled(IOverlayUi ui)
     {
         RuntimePlugin[] snapshot;
-        lock (_gate) snapshot = _runtime.Where(r => r.Record.Enabled && r.IsLoaded && !r.DrawFaulted).ToArray();
+        lock (_gate)
+        {
+            snapshot = _runtime
+                .Where(r => r.Record.Enabled && r.Record.HudVisible && r.IsLoaded && !r.DrawFaulted)
+                .ToArray();
+        }
 
         foreach (var plugin in snapshot)
         {
@@ -107,6 +149,53 @@ internal sealed class PluginManager : IDisposable
                 Save();
                 StatusMessage = $"Disabled drawing for {plugin.Record.DisplayName}: {ex.Message}";
             }
+        }
+    }
+
+    public IReadOnlyList<RadialPluginEntry> GetRadialEntries()
+    {
+        lock (_gate)
+        {
+            return _runtime
+                .Where(r => r.Record.Enabled && r.IsLoaded)
+                .Select(r => new RadialPluginEntry(
+                    r.Record.Id,
+                    string.IsNullOrWhiteSpace(r.Record.DisplayName) ? r.Record.Id : r.Record.DisplayName,
+                    r.Record.HudVisible))
+                .OrderBy(e => e.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+    }
+
+    public bool SetHudVisible(string id, bool visible)
+    {
+        lock (_gate)
+        {
+            var runtime = FindRuntime(id);
+            if (runtime is null) return false;
+            if (runtime.Record.HudVisible == visible) return true;
+            runtime.Record.HudVisible = visible;
+            StatusMessage = visible
+                ? $"Showing {runtime.Record.DisplayName}"
+                : $"Hiding {runtime.Record.DisplayName}";
+            Save();
+            return true;
+        }
+    }
+
+    public bool ToggleHudVisible(string id)
+    {
+        lock (_gate)
+        {
+            var runtime = FindRuntime(id);
+            if (runtime is null) return false;
+            var next = !runtime.Record.HudVisible;
+            runtime.Record.HudVisible = next;
+            StatusMessage = next
+                ? $"Showing {runtime.Record.DisplayName}"
+                : $"Hiding {runtime.Record.DisplayName}";
+            Save();
+            return true;
         }
     }
 
@@ -340,33 +429,91 @@ internal sealed class PluginManager : IDisposable
             if (dll is null) continue;
             lock (_gate)
             {
-                if (_registry.Plugins.Any(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase)))
-                    continue;
-
-                // Copy into managed plugins dir so enable/disable stays consistent.
                 var dest = Path.Combine(OverlayPaths.PluginsDir, id);
-                CopyDirectory(dir, dest);
-                var destDll = FindPluginDll(dest, id)!;
-                var record = new PluginRecord
+                var existing = _registry.Plugins.FirstOrDefault(p =>
+                    string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+
+                // Always refresh from build output when the source DLL is newer.
+                var destDllExisting = existing is not null && File.Exists(existing.DllPath) ? existing.DllPath : null;
+                var shouldCopy = existing is null
+                    || destDllExisting is null
+                    || File.GetLastWriteTimeUtc(dll) > File.GetLastWriteTimeUtc(destDllExisting);
+
+                if (shouldCopy)
                 {
-                    Id = id,
-                    DisplayName = id,
-                    InstallDir = dest,
-                    DllPath = destDll,
-                    Enabled = true,
-                    InstalledAt = DateTimeOffset.Now,
-                };
-                _registry.Plugins.Add(record);
-                var runtime = new RuntimePlugin { Record = record };
-                _runtime.Add(runtime);
-                try
-                {
-                    LoadInto(runtime);
+                    // Unload first so AppData DLL isn't locked by this process.
+                    var loaded = FindRuntime(id);
+                    if (loaded is { IsLoaded: true })
+                    {
+                        try { loaded.Dispose(); }
+                        catch { /* ignore */ }
+                    }
+
+                    if (!TryCopyDirectory(dir, dest, out var copyError))
+                    {
+                        StatusMessage = $"Skipped refreshing {id}: {copyError}";
+                        // Reload previous bits if we had unloaded them.
+                        if (loaded is not null && existing is { Enabled: true })
+                        {
+                            try { LoadInto(loaded); }
+                            catch { /* keep disabled until next run */ }
+                        }
+                        continue;
+                    }
                 }
-                catch (Exception ex)
+
+                var destDll = FindPluginDll(dest, id);
+                if (destDll is null) continue;
+
+                if (existing is null)
                 {
-                    record.Enabled = false;
-                    record.LastError = ex.Message;
+                    var record = new PluginRecord
+                    {
+                        Id = id,
+                        DisplayName = id,
+                        InstallDir = dest,
+                        DllPath = destDll,
+                        Enabled = true,
+                        InstalledAt = DateTimeOffset.Now,
+                    };
+                    _registry.Plugins.Add(record);
+                    var runtime = new RuntimePlugin { Record = record };
+                    _runtime.Add(runtime);
+                    try { LoadInto(runtime); }
+                    catch (Exception ex)
+                    {
+                        record.Enabled = false;
+                        record.LastError = ex.Message;
+                    }
+                }
+                else
+                {
+                    var wasEnabled = existing.Enabled;
+                    existing.InstallDir = dest;
+                    existing.DllPath = destDll;
+                    var runtime = FindRuntime(id);
+                    if (runtime is not null && wasEnabled && shouldCopy)
+                    {
+                        try
+                        {
+                            LoadInto(runtime);
+                            existing.LastError = null;
+                        }
+                        catch (Exception ex)
+                        {
+                            existing.Enabled = false;
+                            existing.LastError = ex.Message;
+                        }
+                    }
+                    else if (runtime is not null && wasEnabled && !runtime.IsLoaded)
+                    {
+                        try { LoadInto(runtime); }
+                        catch (Exception ex)
+                        {
+                            existing.Enabled = false;
+                            existing.LastError = ex.Message;
+                        }
+                    }
                 }
             }
         }
@@ -461,10 +608,112 @@ internal sealed class PluginManager : IDisposable
 
         var instance = (ISpiritValePlugin)Activator.CreateInstance(type)!;
         instance.OnLoad(_api);
+        ApplyStoredOptions(runtime.Record, instance);
         runtime.Context = context;
         runtime.Instance = instance;
         if (!string.IsNullOrWhiteSpace(instance.Name))
             runtime.Record.DisplayName = instance.Name;
+    }
+
+    private static void ApplyStoredOptions(PluginRecord record, ISpiritValePlugin instance)
+    {
+        var defs = instance.OptionDefinitions;
+        if (defs.Count == 0) return;
+        var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var def in defs)
+            merged[def.Key] = def.DefaultValue ?? "";
+        foreach (var (k, v) in record.Options)
+            merged[k] = v;
+        instance.ApplyOptions(merged);
+        // Keep registry filled with current export (so defaults get persisted).
+        foreach (var (k, v) in instance.ExportOptions())
+            record.Options[k] = v;
+    }
+
+    public IReadOnlyList<PluginOptionDefinition> GetOptionDefinitions(string pluginId)
+    {
+        lock (_gate)
+        {
+            var runtime = FindRuntime(pluginId);
+            return runtime?.Instance?.OptionDefinitions ?? Array.Empty<PluginOptionDefinition>();
+        }
+    }
+
+    public IReadOnlyDictionary<string, string> GetOptions(string pluginId)
+    {
+        lock (_gate)
+        {
+            var runtime = FindRuntime(pluginId);
+            if (runtime?.Instance is null)
+                return new Dictionary<string, string>(runtime?.Record.Options ?? new(), StringComparer.OrdinalIgnoreCase);
+            return new Dictionary<string, string>(runtime.Instance.ExportOptions(), StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    public bool SetOption(string pluginId, string key, string value)
+    {
+        lock (_gate)
+        {
+            var runtime = FindRuntime(pluginId);
+            if (runtime is null) return false;
+            runtime.Record.Options[key] = value;
+            if (runtime.Instance is not null)
+            {
+                var merged = new Dictionary<string, string>(runtime.Record.Options, StringComparer.OrdinalIgnoreCase);
+                foreach (var def in runtime.Instance.OptionDefinitions)
+                    merged.TryAdd(def.Key, def.DefaultValue ?? "");
+                runtime.Instance.ApplyOptions(merged);
+                foreach (var (k, v) in runtime.Instance.ExportOptions())
+                    runtime.Record.Options[k] = v;
+            }
+            Save();
+            return true;
+        }
+    }
+
+    public bool HasOptions(string pluginId)
+    {
+        lock (_gate)
+        {
+            var runtime = FindRuntime(pluginId);
+            return runtime?.Instance is { OptionDefinitions.Count: > 0 };
+        }
+    }
+
+    /// <summary>Poll plugin hotkey options; fire OnOptionHotkey on rising edge.</summary>
+    public void PollOptionHotkeys(Dictionary<string, bool> edgeState)
+    {
+        List<(string PluginId, string Key, string Chord, ISpiritValePlugin Instance)> hotkeys;
+        lock (_gate)
+        {
+            hotkeys = new();
+            foreach (var runtime in _runtime)
+            {
+                if (!runtime.Record.Enabled || runtime.Instance is null) continue;
+                foreach (var def in runtime.Instance.OptionDefinitions)
+                {
+                    if (def.Kind != PluginOptionKind.Hotkey) continue;
+                    var values = runtime.Instance.ExportOptions();
+                    if (!values.TryGetValue(def.Key, out var chord) || string.IsNullOrWhiteSpace(chord))
+                        chord = def.DefaultValue;
+                    if (string.IsNullOrWhiteSpace(chord)) continue;
+                    hotkeys.Add((runtime.Record.Id, def.Key, chord!, runtime.Instance));
+                }
+            }
+        }
+
+        foreach (var (pluginId, key, chord, instance) in hotkeys)
+        {
+            var edgeKey = $"{pluginId}:{key}";
+            var down = HotkeyChord.IsPressed(chord);
+            edgeState.TryGetValue(edgeKey, out var wasDown);
+            if (down && !wasDown)
+            {
+                try { instance.OnOptionHotkey(key); }
+                catch { /* ignore plugin hotkey faults */ }
+            }
+            edgeState[edgeKey] = down;
+        }
     }
 
     private RuntimePlugin? FindRuntime(string id)
@@ -484,12 +733,14 @@ internal sealed class PluginManager : IDisposable
         InstallDir = r.InstallDir,
         DllPath = r.DllPath,
         Enabled = r.Enabled,
+        HudVisible = r.HudVisible,
         CatalogId = r.CatalogId,
         CatalogVersion = r.CatalogVersion,
         Sha256 = r.Sha256,
         UpdateAvailable = r.UpdateAvailable,
         LastError = r.LastError,
         InstalledAt = r.InstalledAt,
+        Options = new Dictionary<string, string>(r.Options ?? new(), StringComparer.OrdinalIgnoreCase),
     };
 
     private static bool IsUnderPluginsRoot(string path)
@@ -560,13 +811,40 @@ internal sealed class PluginManager : IDisposable
 
     private static void CopyDirectory(string source, string dest)
     {
-        Directory.CreateDirectory(dest);
-        foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+        if (!TryCopyDirectory(source, dest, out var error))
+            throw new IOException(error);
+    }
+
+    private static bool TryCopyDirectory(string source, string dest, out string? error)
+    {
+        error = null;
+        try
         {
-            var rel = Path.GetRelativePath(source, file);
-            var target = Path.Combine(dest, rel);
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(file, target, overwrite: true);
+            Directory.CreateDirectory(dest);
+            foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+            {
+                var rel = Path.GetRelativePath(source, file);
+                var target = Path.Combine(dest, rel);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                try
+                {
+                    File.Copy(file, target, overwrite: true);
+                }
+                catch (IOException ex)
+                {
+                    // Another overlay instance (or AV) may still hold the DLL — skip refresh.
+                    error = ex.Message;
+                    return false;
+                }
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
         }
     }
 }
+
+internal sealed record RadialPluginEntry(string Id, string DisplayName, bool HudVisible);

@@ -25,6 +25,11 @@ internal static class OverlayPaths
 internal sealed class PluginRegistryFile
 {
     public string CatalogUrl { get; set; } = "https://www.spiritvalemods.com";
+    public string? PreferredCaptureDevice { get; set; }
+    public bool AutoStartCapture { get; set; } = true;
+    public string? LocalCharacterName { get; set; }
+    /// <summary>Folder of dumped PNGs ({spriteId}-sharedassets…).</summary>
+    public string? SpriteDumpPath { get; set; }
     public List<PluginRecord> Plugins { get; set; } = new();
 }
 
@@ -35,12 +40,16 @@ internal sealed class PluginRecord
     public string InstallDir { get; set; } = "";
     public string DllPath { get; set; } = "";
     public bool Enabled { get; set; } = true;
+    /// <summary>When false, plugin stays loaded but its overlay windows are hidden (radial menu).</summary>
+    public bool HudVisible { get; set; } = true;
     public string? CatalogId { get; set; }
     public string? CatalogVersion { get; set; }
     public string? Sha256 { get; set; }
     public bool UpdateAvailable { get; set; }
     public string? LastError { get; set; }
     public DateTimeOffset? InstalledAt { get; set; }
+    /// <summary>Plugin-defined settings (string-encoded bools / hotkeys / text).</summary>
+    public Dictionary<string, string> Options { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 internal static class PluginRegistryStore

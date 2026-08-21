@@ -14,6 +14,7 @@ public interface ISpiritValeApi
     ICharacterApi Character { get; }
     IWorldApi World { get; }
     IProtocolApi Protocol { get; }
+    ISpriteCatalog Sprites { get; }
 
     /// <summary>Raised when capture starts or stops.</summary>
     event Action<bool>? CaptureStateChanged;

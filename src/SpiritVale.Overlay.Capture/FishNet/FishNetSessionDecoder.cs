@@ -81,8 +81,12 @@ public sealed class FishNetSessionDecoder
             var parsed = MessageParser.Parse(buffer, offset, tick, packets.Count, state, options);
             packets.Add(parsed.Packet);
 
-            if (parsed.Packet.PacketName is FishNetPacketNames.Authenticated or FishNetPacketNames.Disconnect)
+            // Keep RpcLinks across re-auth (mid-session); only wipe on disconnect.
+            if (parsed.Packet.PacketName == FishNetPacketNames.Disconnect)
+            {
                 state.Links.Clear();
+                state.Components.Clear();
+            }
 
             if (parsed.Stop || parsed.End <= offset)
                 break;

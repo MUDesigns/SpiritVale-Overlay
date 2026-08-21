@@ -100,10 +100,25 @@ internal static class MessageParser
                 }
                 case FishNetPacketNames.ObjectSpawn:
                 {
-                    // Best-effort: treat remaining bytes as opaque spawn when full spawn parser is unavailable.
-                    var packet = Opaque(buffer, start, tick, bundleIndex, packetName);
-                    TryReadSpawnObjectId(buffer, dataStart, packet);
-                    return new ParsedMessage(packet, buffer.Length, true);
+                    var spawn = SpawnParser.TryParse(buffer, dataStart, options.RpcMap);
+                    if (spawn is not null)
+                    {
+                        foreach (var (linkId, registration) in spawn.Registrations)
+                            state.Links[linkId] = registration;
+                        foreach (var (key, typeName) in spawn.ComponentBindings)
+                            state.Components[key] = typeName;
+
+                        var packet = BasePacket(buffer, start, spawn.End, tick, bundleIndex, packetId, packetName);
+                        packet.ObjectId = spawn.ObjectId;
+                        packet.OwnerConnectionId = spawn.OwnerConnectionId;
+                        packet.SpawnPrefabId = spawn.PrefabId;
+                        packet.Payload = buffer.Slice(dataStart, spawn.End - dataStart).ToArray();
+                        return new ParsedMessage(packet, spawn.End, false);
+                    }
+
+                    var opaque = Opaque(buffer, start, tick, bundleIndex, packetName);
+                    TryReadSpawnObjectId(buffer, dataStart, opaque);
+                    return new ParsedMessage(opaque, buffer.Length, true);
                 }
                 case FishNetPacketNames.Disconnect:
                     end = buffer.Length;
@@ -187,6 +202,20 @@ internal static class MessageParser
         else
         {
             packet.LinkResolved = false;
+            // Overlay started mid-session: spawn links missed — still name known DTOs by wire shape.
+            if (DamageCodec.TryDecode(packet.Payload, out var orphanDamage))
+            {
+                packet.RpcName = "ApplyDamage_C";
+                packet.NetworkBehaviourType ??= "HealthComponent";
+                DamageCodec.WriteToFields(packet, orphanDamage);
+            }
+            else if (ActorIdentityCodec.TryDecodeCharacterData(packet.Payload) is { } character)
+            {
+                // Don't force RpcName — Inspect_T uses the same DTO. Directory decides local vs other.
+                packet.Fields["displayName"] = character.DisplayName;
+                if (character.Uid is not null)
+                    packet.Fields["uid"] = character.Uid;
+            }
         }
         return new ParsedMessage(packet, end, stop);
     }
@@ -229,6 +258,9 @@ internal static class MessageParser
             packet.RpcHash = hash8;
             packet.RpcHash16Candidate = hash16;
 
+            var hashWidthGuess = hash16 is int h16 && h16 > 0xff ? 2 : 1;
+            packet.Payload = buffer.Slice(rpcStart + hashWidthGuess, end - (rpcStart + hashWidthGuess)).ToArray();
+
             if (packet.NetworkBehaviourType is null && options.RpcMap is not null)
             {
                 var inferred = options.RpcMap.InferBehaviourType(packetName, hash8, hash16);
@@ -241,7 +273,18 @@ internal static class MessageParser
 
             ApplyRpcLookup(packet, options.RpcMap, packetName, hash8, hash16);
             var hashWidth = packet.RpcHash is int wh && wh > 0xff ? 2 : 1;
-            packet.Payload = buffer.Slice(rpcStart + hashWidth, end - (rpcStart + hashWidth)).ToArray();
+            if (hashWidth != hashWidthGuess)
+                packet.Payload = buffer.Slice(rpcStart + hashWidth, end - (rpcStart + hashWidth)).ToArray();
+
+            // Fixed RPCs without a map hit can still carry CharacterData (Inspect / late join).
+            if (packet.RpcName is null
+                && ActorIdentityCodec.TryDecodeCharacterData(packet.Payload) is { } character)
+            {
+                packet.Fields["displayName"] = character.DisplayName;
+                if (character.Uid is not null)
+                    packet.Fields["uid"] = character.Uid;
+            }
+
             return new ParsedMessage(packet, end, stop);
         }
         catch
@@ -253,11 +296,41 @@ internal static class MessageParser
     private static void ApplyRpcLookup(DecodedFishNetPacket packet, FishNetRpcMap? map, string packetKind, int hash8, int? hash16)
     {
         if (map is null) return;
-        var lookup = map.Lookup(packet.NetworkBehaviourType, packetKind, hash8, hash16);
-        if (lookup is null) return;
-        packet.RpcName = lookup.MethodName;
-        packet.RpcHash = lookup.WireHash;
-        packet.NetworkBehaviourType ??= lookup.BehaviourType;
+        var matches = map.FindAll(packet.NetworkBehaviourType, packetKind, hash8, hash16);
+        if (matches.Count == 0) return;
+
+        FishNetRpcDefinition? chosen = null;
+        if (matches.Count == 1)
+        {
+            chosen = matches[0];
+        }
+        else
+        {
+            // observersRpc hash 0 collides (ApplyDamage_C vs Attack_C) — prefer Damage wire shape.
+            foreach (var candidate in matches)
+            {
+                if (candidate.MethodName is "ApplyDamage_C" or "Death_C"
+                    && DamageCodec.TryDecode(packet.Payload, out _))
+                {
+                    chosen = candidate;
+                    break;
+                }
+            }
+            chosen ??= matches.FirstOrDefault(m => m.MethodName == "ApplyDamage_C") ?? matches[0];
+        }
+
+        // Empty-parameter RPCs must not claim non-empty payloads (FullHeal false positives).
+        if ((chosen.Parameters is null || chosen.Parameters.Count == 0) && packet.Payload.Length > 0
+            && chosen.MethodName is not ("ApplyDamage_C" or "Death_C" or "Recover_C" or "Attack_C"))
+            return;
+
+        packet.RpcName = chosen.MethodName;
+        packet.RpcHash = chosen.WireHash;
+        packet.NetworkBehaviourType ??= chosen.BehaviourType;
+
+        if (chosen.MethodName is "ApplyDamage_C" or "Death_C"
+            && DamageCodec.TryDecode(packet.Payload, out var dmg))
+            DamageCodec.WriteToFields(packet, dmg);
     }
 
     private static DecodedFishNetPacket BasePacket(
