@@ -11,5 +11,12 @@ Plugins/**/*
 !Plugins/SpiritVale.Overlay.SamplePlugin/
 !Plugins/SpiritVale.Overlay.SamplePlugin/**
 !Plugins/SpiritVale.Overlay.SamplePlugin/*.dll
+# Track the ready-to-run Windows plugin manager publish output
+!dist/
+!dist/**
+!dist/**/*.dll
+!dist/**/*.exe
+!dist/**/*.json
+dist/**/*.pdb
 .idea/
 *.DotSettings.user
