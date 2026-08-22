@@ -64,6 +64,7 @@ internal sealed class PluginManager : IDisposable
         _catalog = new CatalogClient(_registry.CatalogUrl);
         DiscoverLocalPlugins();
         LoadEnabled();
+        DeduplicateByPluginDll();
     }
 
     public string CatalogUrl
@@ -102,21 +103,30 @@ internal sealed class PluginManager : IDisposable
             var id = Path.GetFileName(dir);
             var srcDll = FindPluginDll(dir, id);
             if (srcDll is null) continue;
-            var destDir = Path.Combine(OverlayPaths.PluginsDir, id);
-            var destDll = Path.Combine(destDir, Path.GetFileName(srcDll));
-            Directory.CreateDirectory(destDir);
+            var dllName = Path.GetFileName(srcDll);
+
+            // Prefer overwriting an existing AppData install of the same DLL (e.g. catalog id folder)
+            // instead of creating a second SpiritVale.Overlay.* directory.
+            var destDll = Directory.GetDirectories(OverlayPaths.PluginsDir)
+                .Select(d => FindPluginDll(d, Path.GetFileName(d)))
+                .FirstOrDefault(p =>
+                    p is not null
+                    && Path.GetFileName(p).Equals(dllName, StringComparison.OrdinalIgnoreCase));
+
+            if (destDll is null)
+            {
+                var destDir = Path.Combine(OverlayPaths.PluginsDir, id);
+                destDll = Path.Combine(destDir, dllName);
+                Directory.CreateDirectory(destDir);
+            }
+
             if (File.Exists(destDll)
                 && File.GetLastWriteTimeUtc(srcDll) <= File.GetLastWriteTimeUtc(destDll))
                 continue;
             try
             {
-                foreach (var file in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
-                {
-                    var rel = Path.GetRelativePath(dir, file);
-                    var target = Path.Combine(destDir, rel);
-                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                    File.Copy(file, target, overwrite: true);
-                }
+                Directory.CreateDirectory(Path.GetDirectoryName(destDll)!);
+                File.Copy(srcDll, destDll, overwrite: true);
             }
             catch
             {
@@ -380,6 +390,88 @@ internal sealed class PluginManager : IDisposable
         }
     }
 
+    public void ImportZipFromPath(string zipPath, bool enable = true)
+    {
+        if (!File.Exists(zipPath))
+            throw new FileNotFoundException("Zip not found.", zipPath);
+
+        IsBusy = true;
+        try
+        {
+            OverlayPaths.Ensure();
+            var hash = CatalogClient.ComputeSha256(zipPath);
+            var id = Path.GetFileNameWithoutExtension(zipPath);
+            // Prefer a folder name from the zip if it has a single top-level directory.
+            try
+            {
+                using var archive = ZipFile.OpenRead(zipPath);
+                var tops = archive.Entries
+                    .Select(e => e.FullName.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault())
+                    .Where(s => !string.IsNullOrEmpty(s) && !s!.Equals("BepInEx", StringComparison.OrdinalIgnoreCase) && !s.Equals("Plugins", StringComparison.OrdinalIgnoreCase))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (tops.Count == 1 && tops[0] is string folder && !folder.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                    id = folder;
+            }
+            catch { /* keep filename id */ }
+
+            id = SanitizeId(id);
+            var libraryCopy = Path.Combine(OverlayPaths.LibraryDir, $"{id}.zip");
+            Directory.CreateDirectory(OverlayPaths.LibraryDir);
+            File.Copy(zipPath, libraryCopy, overwrite: true);
+
+            var installDir = Path.Combine(OverlayPaths.PluginsDir, id);
+            ExtractPluginZip(libraryCopy, installDir);
+            var dllPath = FindPluginDll(installDir, id)
+                ?? throw new InvalidOperationException($"No plugin DLL found in zip '{zipPath}'.");
+
+            lock (_gate)
+            {
+                var existing = FindRuntime(id);
+                existing?.Dispose();
+                if (existing is not null)
+                    _runtime.Remove(existing);
+                _registry.Plugins.RemoveAll(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+
+                var record = new PluginRecord
+                {
+                    Id = id,
+                    DisplayName = id,
+                    InstallDir = installDir,
+                    DllPath = dllPath,
+                    Enabled = enable,
+                    Sha256 = hash,
+                    UpdateAvailable = false,
+                    InstalledAt = DateTimeOffset.Now,
+                };
+                _registry.Plugins.Add(record);
+                _runtime.Add(new RuntimePlugin { Record = record });
+                Save();
+            }
+
+            if (enable)
+                SetEnabled(id, true);
+
+            StatusMessage = $"Imported {id}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public Task<AppUpdateInfo> CheckAppUpdateAsync(CancellationToken ct = default)
+        => _catalog.CheckAppUpdateAsync(ct);
+
+    public Task<string> ApplyAppUpdateAsync(AppUpdateInfo info, CancellationToken ct = default)
+        => AppUpdater.ApplyUpdateAsync(_catalog, info, msg => StatusMessage = msg, ct);
+
+    private static string SanitizeId(string id)
+    {
+        var cleaned = new string(id.Where(c => char.IsLetterOrDigit(c) || c is '.' or '-' or '_').ToArray());
+        return string.IsNullOrWhiteSpace(cleaned) ? "imported-plugin" : cleaned;
+    }
+
     public async Task UpdateFromCatalogAsync(string id, CancellationToken ct = default)
     {
         PluginRecord? record;
@@ -518,6 +610,7 @@ internal sealed class PluginManager : IDisposable
             }
         }
         Save();
+        DeduplicateByPluginDll();
     }
 
     public void Dispose()
@@ -539,6 +632,7 @@ internal sealed class PluginManager : IDisposable
             var id = Path.GetFileName(dir);
             var dll = FindPluginDll(dir, id);
             if (dll is null) continue;
+            var dllName = Path.GetFileName(dll);
 
             lock (_gate)
             {
@@ -553,6 +647,12 @@ internal sealed class PluginManager : IDisposable
                     continue;
                 }
 
+                // Same DLL already tracked under another folder id (catalog vs local name).
+                var sameDll = _registry.Plugins.FirstOrDefault(p =>
+                    Path.GetFileName(p.DllPath).Equals(dllName, StringComparison.OrdinalIgnoreCase));
+                if (sameDll is not null)
+                    continue;
+
                 _registry.Plugins.Add(new PluginRecord
                 {
                     Id = id,
@@ -565,6 +665,61 @@ internal sealed class PluginManager : IDisposable
             }
         }
         Save();
+    }
+
+    /// <summary>
+    /// Collapse duplicate installs of the same plugin DLL (catalog folder + local folder).
+    /// Prefers catalog-linked entries.
+    /// </summary>
+    private void DeduplicateByPluginDll()
+    {
+        lock (_gate)
+        {
+            var groups = _runtime
+                .GroupBy(
+                    r => Path.GetFileName(r.Record.DllPath) ?? r.Record.Id,
+                    StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.Count() > 1)
+                .ToList();
+            if (groups.Count == 0) return;
+
+            foreach (var group in groups)
+            {
+                var ordered = group
+                    .OrderByDescending(r => !string.IsNullOrWhiteSpace(r.Record.CatalogId))
+                    .ThenByDescending(r =>
+                        r.Record.Id.StartsWith("spiritvale-overlay-", StringComparison.OrdinalIgnoreCase))
+                    .ThenByDescending(r => r.Record.InstalledAt ?? DateTimeOffset.MinValue)
+                    .ToList();
+                var keep = ordered[0];
+                foreach (var drop in ordered.Skip(1))
+                {
+                    drop.Dispose();
+                    _runtime.Remove(drop);
+                    _registry.Plugins.RemoveAll(p =>
+                        string.Equals(p.Id, drop.Record.Id, StringComparison.OrdinalIgnoreCase));
+                    try
+                    {
+                        if (Directory.Exists(drop.Record.InstallDir)
+                            && IsUnderPluginsRoot(drop.Record.InstallDir)
+                            && !string.Equals(
+                                Path.GetFullPath(drop.Record.InstallDir),
+                                Path.GetFullPath(keep.Record.InstallDir),
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            Directory.Delete(drop.Record.InstallDir, recursive: true);
+                        }
+                    }
+                    catch
+                    {
+                        // Folder may be locked; registry entry is already gone.
+                    }
+                }
+            }
+
+            Save();
+            StatusMessage = "Removed duplicate plugin installs.";
+        }
     }
 
     private void LoadEnabled()

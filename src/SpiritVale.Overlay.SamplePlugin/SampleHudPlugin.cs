@@ -27,9 +27,9 @@ public sealed class SampleHudPlugin : ISpiritValePlugin
     private const int FeedMax = 4;
 
     public string Id => "sample.hud";
-    public string Name => "Sample DPS + Party";
+    public string Name => "DPS Meter";
     public string Author => "MUDesigns";
-    public string Version => "0.6.3";
+    public string Version => "0.7.1";
 
     public IReadOnlyList<PluginOptionDefinition> OptionDefinitions { get; } =
     [
@@ -98,6 +98,7 @@ public sealed class SampleHudPlugin : ISpiritValePlugin
     public void Draw(IOverlayUi ui)
     {
         if (_api is null) return;
+        if (!_api.IsGameFocused) return;
 
         if (_showDps)
         {
@@ -114,14 +115,14 @@ public sealed class SampleHudPlugin : ISpiritValePlugin
                 {
                     if (encounter is not null)
                     {
-                        ui.TextColored(0.77f, 0.66f, 1f, 1f,
+                        ui.TextColored(OverlayHudColors.Gold.R, OverlayHudColors.Gold.G, OverlayHudColors.Gold.B, OverlayHudColors.Gold.A,
                             $"{encounter.Duration:mm\\:ss}  {FormatDamage(encounter.TotalDamage)}");
                         ui.SameLine(6f);
                         if (ui.SmallButton("Reset"))
                             _api.Combat.ResetEncounter();
                     }
                     else
-                        ui.TextColored(0.55f, 0.58f, 0.65f, 1f, "— idle —");
+                        ui.TextColored(OverlayHudColors.Muted.R, OverlayHudColors.Muted.G, OverlayHudColors.Muted.B, OverlayHudColors.Muted.A, "— idle —");
                 }
 
                 var rank = 1;
@@ -138,7 +139,7 @@ public sealed class SampleHudPlugin : ISpiritValePlugin
                 }
 
                 if (!any)
-                    ui.TextColored(0.45f, 0.48f, 0.55f, 1f, "no hits yet");
+                    ui.TextColored(OverlayHudColors.Muted.R, OverlayHudColors.Muted.G, OverlayHudColors.Muted.B, OverlayHudColors.Muted.A, "no hits yet");
 
                 if (!_hideFeed)
                 {
@@ -148,7 +149,7 @@ public sealed class SampleHudPlugin : ISpiritValePlugin
                     {
                         ui.Spacing();
                         foreach (var line in feedLines)
-                            ui.TextColored(0.55f, 0.58f, 0.65f, 1f, line);
+                            ui.TextColored(OverlayHudColors.Muted.R, OverlayHudColors.Muted.G, OverlayHudColors.Muted.B, OverlayHudColors.Muted.A, line);
                     }
                 }
             }
@@ -177,7 +178,7 @@ public sealed class SampleHudPlugin : ISpiritValePlugin
                 var members = _api.Party.Members;
                 if (members.Count == 0)
                 {
-                    ui.TextColored(0.55f, 0.58f, 0.65f, 1f, "no party");
+                    ui.TextColored(OverlayHudColors.Muted.R, OverlayHudColors.Muted.G, OverlayHudColors.Muted.B, OverlayHudColors.Muted.A, "no party");
                 }
                 else
                 {
@@ -186,7 +187,7 @@ public sealed class SampleHudPlugin : ISpiritValePlugin
                         var tag = m.IsLeader ? "*" : "";
                         ui.TextUnformatted($"{Truncate(m.DisplayName, 14)}{tag}");
                         var hp = m.MaxHealth > 0 ? m.Health / m.MaxHealth : 0f;
-                        ui.ProgressBar(hp, 0.22f, 0.78f, 0.47f, 4f);
+                        ui.ProgressBar(hp, OverlayHudColors.Ok.R, OverlayHudColors.Ok.G, OverlayHudColors.Ok.B, 4f);
                     }
                 }
             }
@@ -218,7 +219,7 @@ public sealed class SampleHudPlugin : ISpiritValePlugin
 
         // Color only your name — ranking is by damage, not forced first place.
         if (mine)
-            ui.TextColored(1f, 0.82f, 0.35f, 1f, name);
+            ui.TextColored(OverlayHudColors.Gold.R, OverlayHudColors.Gold.G, OverlayHudColors.Gold.B, OverlayHudColors.Gold.A, name);
         else
             ui.TextUnformatted(name);
 
@@ -248,9 +249,9 @@ public sealed class SampleHudPlugin : ISpiritValePlugin
 
         var share = (float)Math.Clamp(row.Share, 0, 1);
         if (mine)
-            ui.ProgressBar(share, 1f, 0.82f, 0.35f, 3f);
+            ui.ProgressBar(share, OverlayHudColors.Gold.R, OverlayHudColors.Gold.G, OverlayHudColors.Gold.B, 3f);
         else
-            ui.ProgressBar(share, 0.35f, 0.55f, 0.85f, 3f);
+            ui.ProgressBar(share, OverlayHudColors.Blue.R, OverlayHudColors.Blue.G, OverlayHudColors.Blue.B, 3f);
     }
 
     private void DrawSkillWindow(IOverlayUi ui, int actorId, string? playerName)
@@ -265,7 +266,7 @@ public sealed class SampleHudPlugin : ISpiritValePlugin
         var skills = _api!.Combat.GetSkillBreakdown(actorId, playerName);
         if (skills.Count == 0)
         {
-            ui.TextColored(0.55f, 0.58f, 0.65f, 1f, "no skill data yet");
+            ui.TextColored(OverlayHudColors.Muted.R, OverlayHudColors.Muted.G, OverlayHudColors.Muted.B, OverlayHudColors.Muted.A, "no skill data yet");
             ui.EndWindow();
             return;
         }
@@ -278,7 +279,7 @@ public sealed class SampleHudPlugin : ISpiritValePlugin
             var crit = s.Hits > 0 ? $"  {s.CritRate * 100:0}% crit" : "";
             ui.TextUnformatted(
                 $"{Truncate(s.DisplayName, 14)}  {FormatDamage(s.TotalDamage)}  {FormatDamage((long)s.Dps)}/s  {pct}{crit}");
-            ui.ProgressBar((float)Math.Clamp(s.Share, 0, 1), 0.55f, 0.45f, 0.85f, 3f);
+            ui.ProgressBar((float)Math.Clamp(s.Share, 0, 1), OverlayHudColors.Orange.R, OverlayHudColors.Orange.G, OverlayHudColors.Orange.B, 3f);
         }
 
         ui.EndWindow();

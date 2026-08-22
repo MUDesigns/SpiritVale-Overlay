@@ -1,12 +1,13 @@
 {
   "runtimeTarget": {
-    "name": ".NETCoreApp,Version=v8.0",
+    "name": ".NETCoreApp,Version=v8.0/win-x64",
     "signature": ""
   },
   "compilationOptions": {},
   "targets": {
-    ".NETCoreApp,Version=v8.0": {
-      "SpiritVale.Overlay.Host/1.0.0": {
+    ".NETCoreApp,Version=v8.0": {},
+    ".NETCoreApp,Version=v8.0/win-x64": {
+      "SpiritVale.Overlay.Host/0.3.0": {
         "dependencies": {
           "ClickableTransparentOverlay": "11.1.0",
           "SpiritVale.Overlay.Api": "1.0.0",
@@ -38,30 +39,8 @@
             "fileVersion": "1.91.6.1"
           }
         },
-        "runtimeTargets": {
-          "runtimes/linux-x64/native/libcimgui.so": {
-            "rid": "linux-x64",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          },
-          "runtimes/osx/native/libcimgui.dylib": {
-            "rid": "osx",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          },
-          "runtimes/win-arm64/native/cimgui.dll": {
-            "rid": "win-arm64",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          },
+        "native": {
           "runtimes/win-x64/native/cimgui.dll": {
-            "rid": "win-x64",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          },
-          "runtimes/win-x86/native/cimgui.dll": {
-            "rid": "win-x86",
-            "assetType": "native",
             "fileVersion": "0.0.0.0"
           }
         }
@@ -115,15 +94,7 @@
       },
       "System.Text.Encoding.CodePages/9.0.5": {
         "runtime": {
-          "lib/net8.0/System.Text.Encoding.CodePages.dll": {
-            "assemblyVersion": "9.0.0.0",
-            "fileVersion": "9.0.525.21509"
-          }
-        },
-        "runtimeTargets": {
           "runtimes/win/lib/net8.0/System.Text.Encoding.CodePages.dll": {
-            "rid": "win",
-            "assetType": "runtime",
             "assemblyVersion": "9.0.0.0",
             "fileVersion": "9.0.525.21509"
           }
@@ -222,7 +193,7 @@
     }
   },
   "libraries": {
-    "SpiritVale.Overlay.Host/1.0.0": {
+    "SpiritVale.Overlay.Host/0.3.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

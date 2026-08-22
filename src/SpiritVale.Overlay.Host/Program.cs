@@ -9,8 +9,8 @@ using var singleInstance = new Mutex(true, @"Local\SpiritVale.Overlay.Host", out
 if (!createdNew)
 {
     NativeMessageBox(
-        "SpiritVale Overlay is already running.\n\nClose the other instance first (check the tray/taskbar), then launch again — including when switching to Run as administrator.",
-        "SpiritVale Overlay");
+        "SpiritVale Plugin Manager is already running.\n\nClose the other instance first (check the tray/taskbar), then launch again — including when switching to Run as administrator.",
+        "SpiritVale Plugin Manager");
     return;
 }
 
@@ -19,19 +19,26 @@ AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 
 try
 {
-    OverlayPaths.Ensure();
+OverlayPaths.Ensure();
+ProtocolHandler.RegisterCurrentUser();
 
-    // Refresh AppData plugins from this build while DLLs are still unlocked.
-    var buildPlugins = Path.Combine(AppContext.BaseDirectory, "Plugins");
-    PluginManager.SyncDevBuildPlugins(buildPlugins);
+using var capture = new PacketCaptureService();
+using var api = new SpiritValeApi(capture);
+using var plugins = new PluginManager(api);
 
-    using var capture = new PacketCaptureService();
-    using var api = new SpiritValeApi(capture);
-    using var plugins = new PluginManager(api);
-    plugins.ImportDevPluginsFrom(buildPlugins);
+#if DEBUG
+// Local Debug only: sync sibling Plugins\ builds into AppData. Release ships no plugins.
+var buildPlugins = Path.Combine(AppContext.BaseDirectory, "Plugins");
+PluginManager.SyncDevBuildPlugins(buildPlugins);
+plugins.ImportDevPluginsFrom(buildPlugins);
+#endif
 
-    using var overlay = new OverlayApp(api, plugins);
-    await overlay.Run();
+using var overlay = new OverlayApp(api, plugins);
+var deepLinkId = ProtocolHandler.ParseInstallId(args);
+if (!string.IsNullOrWhiteSpace(deepLinkId))
+    overlay.QueueDeepLinkInstall(deepLinkId);
+
+await overlay.Run();
 }
 catch (Exception ex)
 {
@@ -49,7 +56,7 @@ static void LogFatal(string text)
     }
     catch { /* ignore */ }
 
-    NativeMessageBox(text, "SpiritVale Overlay crashed");
+    NativeMessageBox(text, "SpiritVale Plugin Manager crashed");
 }
 
 static void NativeMessageBox(string text, string caption)

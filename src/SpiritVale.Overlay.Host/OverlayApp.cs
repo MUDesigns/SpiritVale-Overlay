@@ -41,9 +41,12 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
     private bool _radialClickThroughOverride;
     private bool _windowIconApplied;
     private bool _overlayHiddenForGame;
+    private AppUpdateInfo? _appUpdate;
+    private string? _pendingDeepLinkInstallId;
+    private bool _requestExitAfterUpdate;
 
     public OverlayApp(SpiritValeApi api, PluginManager plugins)
-        : base("SpiritVale Overlay", DPIAware: true, GetPrimaryScreenWidth(), GetPrimaryScreenHeight())
+        : base("SpiritVale Plugin Manager", DPIAware: true, GetPrimaryScreenWidth(), GetPrimaryScreenHeight())
     {
         _api = api;
         _plugins = plugins;
@@ -53,6 +56,9 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
         _api.CaptureStateChanged += running => _status = running ? "Capturing" : "Idle";
         FPSLimit = 60;
     }
+
+    public void QueueDeepLinkInstall(string catalogId)
+        => _pendingDeepLinkInstallId = catalogId;
 
     protected override Task PostInitialized()
     {
@@ -81,7 +87,21 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
             // Do NOT force index 0 — use saved adapter name / auto-select.
             TryStartCapture(userSelected: false);
         }
-        RunBusy("Refreshing catalog…", () => _plugins.RefreshCatalogAsync());
+        RunBusy("Refreshing catalog…", async () =>
+        {
+            await _plugins.RefreshCatalogAsync();
+            try { _appUpdate = await _plugins.CheckAppUpdateAsync(); }
+            catch { /* non-fatal */ }
+        });
+
+        if (_pendingDeepLinkInstallId is string deepId)
+        {
+            var id = deepId;
+            _pendingDeepLinkInstallId = null;
+            _showHost = true;
+            RunBusy($"Installing {id}…", () => _plugins.InstallFromCatalogAsync(id));
+        }
+
         return Task.CompletedTask;
     }
 
@@ -96,26 +116,39 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
             _windowIconApplied = true;
         }
 
-        // Pin overlay to SpiritVale's client area; hide when the game is gone/minimized.
+        // Pin to SpiritVale while focused; keep Plugin Manager available when it is not.
         SyncOverlayToSpiritVale();
 
         HandleHotkeys();
+
+        if (_requestExitAfterUpdate)
+        {
+            _requestExitAfterUpdate = false;
+            Environment.Exit(0);
+            return;
+        }
 
         var tabHeld = (GetAsyncKeyState(0x09) & 0x8000) != 0; // VK_TAB
         // Don't let ImGui eat Tab / arrow nav while we use Tab for the radial.
         var io = ImGui.GetIO();
         io.ConfigFlags &= ~ImGuiConfigFlags.NavEnableKeyboard;
 
-        var pluginWantsMouse = _ui.WantsMouse;
         _ui.BeginFrame();
 
         var radialOpen = _radial.UpdateAndDraw(_plugins, tabHeld);
 
-        // Radial / plugin config need mouse hits without activating/focus-stealing the overlay
-        // (focus steal causes SpiritVale to miss Tab key-up and "lock" input).
+        RunCaptureWatchdog(ImGui.GetIO().DeltaTime);
+
+        if (_showHost)
+            DrawHostWindow();
+
+        _plugins.DrawEnabled(_ui);
+
+        // Apply click-through after drawing so plugin config CaptureMouse is same-frame.
         if (window is not null)
         {
-            if (radialOpen || pluginWantsMouse)
+            var wantsMouse = radialOpen || _ui.WantsMouse || ImGui.GetIO().WantCaptureMouse;
+            if (wantsMouse)
             {
                 if (!_radialClickThroughOverride)
                 {
@@ -138,20 +171,13 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
                 SetWindowClickThrough(window.Handle, false, noActivate: true);
             }
         }
-
-        RunCaptureWatchdog(ImGui.GetIO().DeltaTime);
-
-        if (_showHost)
-            DrawHostWindow();
-
-        _plugins.DrawEnabled(_ui);
     }
 
     private void DrawHostWindow()
     {
         ImGui.SetNextWindowSize(new Vector2(560, 580), ImGuiCond.FirstUseEver);
         ImGui.SetNextWindowBgAlpha(0.55f);
-        if (!OverlayIcons.BeginBrandedWindow("SPIRITVALE  //  OVERLAY", ref _showHost))
+        if (!OverlayIcons.BeginBrandedWindow("SPIRITVALE  //  PLUGIN MANAGER", ref _showHost))
         {
             ImGui.End();
             return;
@@ -159,6 +185,7 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
 
         HudTheme.AccentRail();
         DrawBrandHeader();
+        DrawAppUpdateBanner();
 
         if (ImGui.BeginTabBar("manager_tabs", ImGuiTabBarFlags.FittingPolicyResizeDown))
         {
@@ -195,7 +222,11 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
         ImGui.TextUnformatted("SPIRITVALE");
         ImGui.PopStyleColor();
         ImGui.SameLine();
-        ImGui.TextColored(HudTheme.TextMuted, "OVERLAY MANAGER");
+        ImGui.TextColored(HudTheme.TextMuted, "PLUGIN MANAGER");
+
+        ImGui.SameLine();
+        if (HudTheme.AccentButton("PLAY", new Vector2(64, 0)))
+            ProtocolHandler.LaunchSteamGame();
 
         ImGui.SameLine(ImGui.GetWindowWidth() - 280);
         if (_forceClickThrough)
@@ -210,6 +241,32 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
 
         ImGui.TextColored(HudTheme.TextMuted, _api.CaptureStatus ?? _status);
         ImGui.Spacing();
+    }
+
+    private void DrawAppUpdateBanner()
+    {
+        if (_appUpdate is not { UpdateAvailable: true })
+            return;
+
+        HudTheme.BeginCard();
+        HudTheme.StatusChip("UPDATE", HudTheme.Warn);
+        ImGui.SameLine();
+        ImGui.TextUnformatted($"Plugin Manager {_appUpdate.LatestVersion} available (you have {_appUpdate.CurrentVersion})");
+        if (!string.IsNullOrWhiteSpace(_appUpdate.Changelog))
+            ImGui.TextColored(HudTheme.TextMuted, _appUpdate.Changelog);
+        if (HudTheme.AccentButton("INSTALL UPDATE") && !_plugins.IsBusy)
+        {
+            var info = _appUpdate;
+            RunBusy("Downloading Plugin Manager update…", async () =>
+            {
+                await _plugins.ApplyAppUpdateAsync(info);
+                _requestExitAfterUpdate = true;
+            });
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("DISMISS"))
+            _appUpdate = null;
+        HudTheme.EndCard();
     }
 
     private void DrawFooterStatus()
@@ -294,7 +351,7 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
         HudTheme.BeginCard();
         ImGui.Checkbox("Follow SpiritVale window", ref _followGame);
         ImGui.TextColored(HudTheme.TextMuted,
-            "Matches the game window; hides when SpiritVale is minimized or not focused (alt-tab).");
+            "Pins the overlay to the game while SpiritVale is focused (plugin HUDs stay on top). Plugin Manager is not always-on-top when the game is closed or alt-tabbed.");
         if (ImGui.Checkbox("Force click-through", ref _forceClickThrough) && window is not null)
             SetWindowClickThrough(window.Handle, _forceClickThrough, noActivate: true);
         if (_forceClickThrough)
@@ -355,6 +412,23 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
                 foreach (var id in due)
                     await _plugins.UpdateFromCatalogAsync(id);
             });
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("IMPORT ZIP") && !_plugins.IsBusy)
+        {
+            var path = NativeFileDialog.PickZipFile();
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                try
+                {
+                    _plugins.ImportZipFromPath(path);
+                    _managerMessage = _plugins.StatusMessage ?? "Imported.";
+                }
+                catch (Exception ex)
+                {
+                    _managerMessage = ex.Message;
+                }
+            }
         }
 
         ImGui.Spacing();
@@ -424,7 +498,7 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
         if (installed.Count == 0)
         {
             HudTheme.BeginCard();
-            ImGui.TextWrapped("No plugins armed. Pull one from CATALOG or drop a folder into the plugins directory.");
+            ImGui.TextWrapped("No plugins installed. Open CATALOG to install from spiritvalemods.com, or use IMPORT ZIP for a manual download.");
             HudTheme.EndCard();
         }
     }
@@ -588,7 +662,7 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
             HudTheme.BeginCard();
             HudTheme.StatusChip("PAUSED", HudTheme.Warn);
             ImGui.Spacing();
-            ImGui.TextWrapped("The public catalog is paused. Overlay plugin listings will show here once the site hosts them.");
+            ImGui.TextWrapped("The public catalog is paused on the server.");
             HudTheme.EndCard();
             return;
         }
@@ -600,17 +674,21 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
         var mods = catalog.Mods
             .Where(m => string.IsNullOrWhiteSpace(_catalogFilter)
                 || m.Name.Contains(_catalogFilter, StringComparison.OrdinalIgnoreCase)
-                || m.Id.Contains(_catalogFilter, StringComparison.OrdinalIgnoreCase))
+                || m.Id.Contains(_catalogFilter, StringComparison.OrdinalIgnoreCase)
+                || (m.Author?.Contains(_catalogFilter, StringComparison.OrdinalIgnoreCase) ?? false))
             .OrderBy(m => m.Name)
             .ToList();
 
-        ImGui.TextColored(HudTheme.TextMuted, $"{mods.Count} LISTING(S)");
+        ImGui.TextColored(HudTheme.TextMuted, $"{mods.Count} MOD(S)");
         foreach (var mod in mods)
         {
             ImGui.PushID(mod.Id);
             HudTheme.BeginCard();
             ImGui.TextUnformatted(mod.Name.ToUpperInvariant());
-            ImGui.TextColored(HudTheme.TextMuted, $"{mod.Id}  ·  v{mod.LatestVersion}  ·  {FormatBytes(mod.SizeBytes)}");
+            var meta = $"{mod.Id}  ·  v{mod.LatestVersion}  ·  {FormatBytes(mod.SizeBytes)}";
+            if (!string.IsNullOrWhiteSpace(mod.Author))
+                meta = $"{mod.Author}  ·  {meta}";
+            ImGui.TextColored(HudTheme.TextMuted, meta);
             if (!string.IsNullOrWhiteSpace(mod.Description))
                 ImGui.TextWrapped(mod.Description);
             else if (!string.IsNullOrWhiteSpace(mod.Changelog))
@@ -826,58 +904,93 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
         if (window is null) return;
 
         var game = FindSpiritValeHwnd();
-        if (game == IntPtr.Zero || IsIconic(game) || !IsWindowVisible(game)
-            || !IsGameOrOverlayForeground(game))
-        {
-            SetOverlayVisible(false);
-            return;
-        }
+        var gameAlive = game != IntPtr.Zero && !IsIconic(game) && IsWindowVisible(game);
+        var gameForeground = gameAlive && IsSpiritValeForeground(game);
+        var overlayForeground = IsOverlayForeground();
+        // Treat overlay focus as still "in game" so clicking plugin config does not
+        // hide HUDs or unpin from SpiritVale. Alt-tab to another app still hides HUDs.
+        var inGameSession = gameAlive && (gameForeground || overlayForeground);
+        _api.IsGameFocused = inGameSession;
 
-        // Game is focused again — always unhide first. Positioning can fail for a frame
-        // after alt-tab without leaving the overlay stuck invisible.
+        // Plugin Manager stays usable when the game is closed or alt-tabbed.
         SetOverlayVisible(true);
+
+        // Plugin HUDs need to sit above SpiritVale; the manager alone must not float over the desktop.
+        ApplyOverlayZOrder(topmost: inGameSession);
 
         if (!_followGame)
             return;
 
-        if (!TryGetGameClientScreenRect(game, out var x, out var y, out var width, out var height))
+        if (inGameSession
+            && TryGetGameClientScreenRect(game, out var x, out var y, out var width, out var height))
+        {
+            try
+            {
+                if (Size.Width != width || Size.Height != height)
+                    Size = new System.Drawing.Size(width, height);
+                if (Position.X != x || Position.Y != y)
+                    Position = new System.Drawing.Point(x, y);
+            }
+            catch
+            {
+                // Window may not be fully ready on first frames.
+            }
             return;
-
-        try
-        {
-            if (Size.Width != width || Size.Height != height)
-                Size = new System.Drawing.Size(width, height);
-            if (Position.X != x || Position.Y != y)
-                Position = new System.Drawing.Point(x, y);
-
-            // Stay above the game without covering other apps outside its rect.
-            SetWindowPos(window.Handle, HWND_TOPMOST, 0, 0, 0, 0,
-                SwpNoMove | SwpNoSize | SwpNoActivate | SwpShowWindow);
         }
-        catch
-        {
-            // Window may not be fully ready on first frames.
-        }
+
+        // Game closed / alt-tabbed — park on the primary display so F2 manager is reachable.
+        EnsurePrimaryDisplayBounds();
+    }
+
+    private bool IsOverlayForeground()
+    {
+        if (window is null) return false;
+        var fg = GetForegroundWindow();
+        if (fg == IntPtr.Zero) return false;
+        return fg == window.Handle || IsAncestorOf(window.Handle, fg);
+    }
+
+    private void ApplyOverlayZOrder(bool topmost)
+    {
+        if (window is null) return;
+        var after = topmost ? HWND_TOPMOST : HWND_NOTOPMOST;
+        SetWindowPos(window.Handle, after, 0, 0, 0, 0,
+            SwpNoMove | SwpNoSize | SwpNoActivate | SwpShowWindow);
     }
 
     /// <summary>
-    /// True when SpiritVale (or this overlay) owns the foreground window.
-    /// Alt-tab to another app must hide the overlay even though the game HWND stays visible.
+    /// True when SpiritVale owns the foreground window (not this overlay alone).
     /// </summary>
-    private bool IsGameOrOverlayForeground(IntPtr gameHwnd)
+    private static bool IsSpiritValeForeground(IntPtr gameHwnd)
     {
         var fg = GetForegroundWindow();
-        if (fg == IntPtr.Zero) return false;
-        if (window is not null && (fg == window.Handle || IsAncestorOf(window.Handle, fg))) return true;
+        if (fg == IntPtr.Zero || gameHwnd == IntPtr.Zero) return false;
         if (fg == gameHwnd || IsAncestorOf(gameHwnd, fg)) return true;
 
-        // Child / owned windows of the game (e.g. dialogs).
         var root = GetAncestor(fg, GaRoot);
         if (root == gameHwnd) return true;
 
         GetWindowThreadProcessId(fg, out var fgPid);
         GetWindowThreadProcessId(gameHwnd, out var gamePid);
         return fgPid != 0 && fgPid == gamePid;
+    }
+
+    private void EnsurePrimaryDisplayBounds()
+    {
+        if (window is null) return;
+        var w = GetPrimaryScreenWidth();
+        var h = GetPrimaryScreenHeight();
+        try
+        {
+            if (Size.Width != w || Size.Height != h)
+                Size = new System.Drawing.Size(w, h);
+            if (Position.X != 0 || Position.Y != 0)
+                Position = new System.Drawing.Point(0, 0);
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     private static bool IsAncestorOf(IntPtr ancestor, IntPtr child)
@@ -908,8 +1021,7 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
 
             _overlayHiddenForGame = false;
             ShowWindow(hwnd, SwShowNoActivate);
-            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                SwpNoMove | SwpNoSize | SwpNoActivate | SwpShowWindow);
+            // Z-order is owned by SyncOverlayToSpiritVale (topmost only while the game is focused).
         }
         else
         {
@@ -1040,6 +1152,7 @@ internal sealed class OverlayApp : ClickableTransparentOverlay.Overlay
     private static extern int GetSystemMetrics(int nIndex);
 
     private static readonly IntPtr HWND_TOPMOST = new(-1);
+    private static readonly IntPtr HWND_NOTOPMOST = new(-2);
     private const uint SwpNoMove = 0x0002;
     private const uint SwpNoSize = 0x0001;
     private const uint SwpNoActivate = 0x0010;

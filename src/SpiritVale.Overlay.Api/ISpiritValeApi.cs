@@ -21,4 +21,11 @@ public interface ISpiritValeApi
 
     bool IsCapturing { get; }
     string? CaptureStatus { get; }
+
+    /// <summary>
+    /// True when SpiritVale is running and either the game or this overlay owns focus.
+    /// False when alt-tabbed to another app (plugin HUDs should hide). Overlay focus alone
+    /// still counts so plugin config clicks do not tear down the HUD.
+    /// </summary>
+    bool IsGameFocused { get; }
 }

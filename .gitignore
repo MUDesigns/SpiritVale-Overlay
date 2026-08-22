@@ -18,6 +18,13 @@ Plugins/**/*
 !dist/**/*.exe
 !dist/**/*.json
 dist/**/*.pdb
+# Never commit plugin DLLs inside the manager publish folder
+dist/win-x64/Plugins/**
+!dist/win-x64/Plugins/.gitkeep
+# Do not commit release installers / portable zips / plugin catalog packs (publish to site/GitHub)
+dist/*.exe
+dist/*.zip
+dist/plugin-zips/
 .idea/
 *.DotSettings.user
 

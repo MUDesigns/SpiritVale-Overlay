@@ -63,6 +63,9 @@ public sealed class SpiritValeApi : ISpiritValeApi, IProtocolApi, IDisposable
     public string? CaptureStatus { get; private set; }
     public bool IncludeRawBytes { get; set; }
 
+    /// <inheritdoc cref="ISpiritValeApi.IsGameFocused" />
+    public bool IsGameFocused { get; set; }
+
     public void StartCapture(int? deviceIndex = null, string? preferredDevice = null)
     {
         _capture.Start(deviceIndex, preferredDevice);

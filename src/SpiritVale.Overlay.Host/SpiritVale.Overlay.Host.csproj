@@ -10,11 +10,23 @@
     <ApplicationIcon>Assets\shop-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <Version>0.3.0</Version>
+    <AssemblyVersion>0.3.0.0</AssemblyVersion>
+    <FileVersion>0.3.0.0</FileVersion>
+    <InformationalVersion>0.3.0</InformationalVersion>
+    <Product>SpiritVale Plugin Manager</Product>
+    <AssemblyTitle>SpiritVale Plugin Manager</AssemblyTitle>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\SpiritVale.Overlay.Api\SpiritVale.Overlay.Api.csproj" />
     <ProjectReference Include="..\SpiritVale.Overlay.Capture\SpiritVale.Overlay.Capture.csproj" />
     <ProjectReference Include="..\SpiritVale.Overlay.Domain\SpiritVale.Overlay.Domain.csproj" />
-    <ProjectReference Include="..\SpiritVale.Overlay.SamplePlugin\SpiritVale.Overlay.SamplePlugin.csproj" ReferenceOutputAssembly="false" />
+    <!-- Sample DPS is a catalog mod; only build it in Debug for local Plugins\ sync. -->
+    <ProjectReference Include="..\SpiritVale.Overlay.SamplePlugin\SpiritVale.Overlay.SamplePlugin.csproj"
+                      ReferenceOutputAssembly="false"
+                      Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
 
   <ItemGroup>
@@ -38,22 +50,17 @@
     </Content>
   </ItemGroup>
 
-  <Target Name="PublishSamplePlugin" AfterTargets="Build;Publish">
+  <!-- Debug only: copy Sample DPS beside the host for SyncDevBuildPlugins. Never ship in Release/publish. -->
+  <Target Name="CopyDebugSamplePlugin" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug'">
     <PropertyGroup>
       <_SamplePluginDll>$(MSBuildThisFileDirectory)..\SpiritVale.Overlay.SamplePlugin\bin\$(Configuration)\net8.0\SpiritVale.Overlay.SamplePlugin.dll</_SamplePluginDll>
       <_PluginOut>$(OutputPath)Plugins\SpiritVale.Overlay.SamplePlugin</_PluginOut>
-      <_PublishPluginOut Condition="'$(PublishDir)' != ''">$(PublishDir)Plugins\SpiritVale.Overlay.SamplePlugin</_PublishPluginOut>
     </PropertyGroup>
     <MakeDir Directories="$(_PluginOut)" Condition="Exists('$(_SamplePluginDll)')" />
     <Copy SourceFiles="$(_SamplePluginDll)"
           DestinationFolder="$(_PluginOut)"
           SkipUnchangedFiles="true"
           Condition="Exists('$(_SamplePluginDll)')" />
-    <MakeDir Directories="$(_PublishPluginOut)" Condition="'$(PublishDir)' != '' And Exists('$(_SamplePluginDll)')" />
-    <Copy SourceFiles="$(_SamplePluginDll)"
-          DestinationFolder="$(_PublishPluginOut)"
-          SkipUnchangedFiles="true"
-          Condition="'$(PublishDir)' != '' And Exists('$(_SamplePluginDll)')" />
   </Target>
 
 </Project>
